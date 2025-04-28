@@ -1,0 +1,38 @@
+name: Auto Commit
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: "0 8,20 * * *" 
+
+jobs:
+  auto_commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4      
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          
+      - name: Set date variable
+        run: |
+          echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+          
+      - name: Write into LAST_UPDATED
+        run: |
+          echo $(date +'%Y-%m-%d %H:%M:%S') > LAST_UPDATED
+          
+      - name: Commit
+        run: |          
+          git config --local user.email "digitaltwinretriever@gmail.com"
+          git config --local user.name "digital-twin-retriever"
+          git add LAST_UPDATED
+          git commit --allow-empty -m "Auto commit: $date"
+          
+      - name: Push
+        uses: ad-m/github-push-action@master
+        with:
+          directory: "."
+          github_token: ${{ secrets.GITHUB_TOKEN }}

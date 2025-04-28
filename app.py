@@ -42,6 +42,9 @@ st.markdown(
         color: #6172e0 !important;
     }
 
+    .st-emotion-cache-1d2o6qs {
+        max-width: 1000px !important;
+    }
 
     header {
         background: transparent !important;
@@ -367,6 +370,11 @@ with st.sidebar:
         [Mauro Andrés Nievas Offidani, MD, MSc](https://www.linkedin.com/in/mauronievasoffidani/)*
         """
     )
+    st.write("")
+    if st.button("🔄 New Chat"):
+        st.session_state.chat_history = []
+        st.session_state.chat_started = False
+        st.experimental_rerun()
 
 
 user_prompt = st.chat_input("Enter a clinical case or ask a question:")

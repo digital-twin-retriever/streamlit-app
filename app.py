@@ -91,7 +91,7 @@ st.markdown(
         padding-right: 2rem;
     }
 
-    .stMain button {
+    .stMain button, .stSidebar button {
         margin: auto;
         display: block;
     }
@@ -364,17 +364,18 @@ with st.sidebar:
         """
     )
     st.write("")
+    if st.button("🔄 New Chat"):
+        st.session_state.chat_history = []
+        st.session_state.chat_started = False
+        st.rerun()
+    st.write("")  
     st.write(
         """
         *Developed by [María Carolina González Galtier, MD, MA](https://www.linkedin.com/in/carogaltier/) &
         [Mauro Andrés Nievas Offidani, MD, MSc](https://www.linkedin.com/in/mauronievasoffidani/)*
         """
     )
-    st.write("")
-    if st.button("🔄 New Chat"):
-        st.session_state.chat_history = []
-        st.session_state.chat_started = False
-        st.experimental_rerun()
+
 
 
 user_prompt = st.chat_input("Enter a clinical case or ask a question:")

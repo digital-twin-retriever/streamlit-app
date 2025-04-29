@@ -23,8 +23,8 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
 # Load data
 @st.cache_resource
 def load_data():
-    case_df = pd.read_parquet("data/cases.parquet")
-    emb_df = pd.read_parquet("data/multicare_clinical_embeddings.parquet")
+    case_df = pd.read_parquet("https://github.com/digital-twin-retriever/streamlit-app/raw/refs/heads/main/data/cases.parquet")
+    emb_df = pd.read_parquet("https://github.com/digital-twin-retriever/streamlit-app/raw/refs/heads/main/data/cases.parquet")
     return case_df, emb_df
 case_df, emb_df = load_data()
 

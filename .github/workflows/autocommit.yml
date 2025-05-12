@@ -26,8 +26,8 @@ jobs:
           
       - name: Commit
         run: |          
-          git config --local user.email "digitaltwinretriever@gmail.com"
-          git config --local user.name "digital-twin-retriever"
+          git config --local user.email 'github-actions[bot]@users.noreply.github.com'
+          git config --local user.name 'github-actions[bot]'
           git add LAST_UPDATED
           git commit --allow-empty -m "Auto commit: $date"
           

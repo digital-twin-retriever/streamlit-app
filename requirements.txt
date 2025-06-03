@@ -48,7 +48,7 @@ soupsieve==2.7
 streamlit==1.44.1
 tenacity==9.1.2
 toml==0.10.2
-tornado==6.4.2
+tornado>=6.5
 typing-extensions==4.13.2
 typing-inspection==0.4.0
 tzdata==2025.2

@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 from google.api_core import retry
 
-st.set_page_config(page_title="Digital Twin Retriever", page_icon=":robot_face:")
+st.set_page_config(page_title="Digital Twin Retriever", page_icon=":robot_face:", layout="wide")
 
 # Configure API key
 client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])

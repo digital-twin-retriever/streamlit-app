@@ -266,6 +266,7 @@ def generate_answer(question: str) -> str:
     Your answer must be descriptive and clinically precise.
     Justify each clinical insight by citing the relevant article ID at the end of the sentence, using brackets like [PMC1234567].
     If the information above is insufficient to answer, tell the user that no relevant data was found, and invite the user to rephrase or to ask something else.
+    Respond in English if the question is in English, or in Spanish if the question is in Spanish.
     """
     response = client.models.generate_content(
         model="gemini-2.0-flash",

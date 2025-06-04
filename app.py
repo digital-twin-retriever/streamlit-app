@@ -27,7 +27,7 @@ def load_case_data():
     return case_df
 
 @st.cache_resource
-def load_case_data():
+def load_embedding_data():
     emb_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1")
     return emb_df
 

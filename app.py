@@ -9,8 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google import genai
 from google.genai import types
 from google.api_core import retry
-import io
-import requests
+
 
 st.set_page_config(page_title="Digital Twin Retriever", page_icon=":robot_face:")
 

@@ -21,12 +21,14 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
 
 
 # Load data
-@st.cache_resource
+@st.cache_data
 def load_data():
     case_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_texts.parquet?download=1")
     emb_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1")
     return case_df, emb_df
-case_df, emb_df = load_data()
+
+with st.spinner("Loading case data from Zenodo..."):
+  case_df, emb_df = load_data()
 
 # Global CSS 
 st.markdown(

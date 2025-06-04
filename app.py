@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google import genai
 from google.genai import types
 from google.api_core import retry
+import io
+import requests
 
 st.set_page_config(page_title="Digital Twin Retriever", page_icon=":robot_face:")
 
@@ -23,9 +25,25 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
 # Load data
 @st.cache_data
 def load_data():
-    case_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_texts.parquet?download=1")
-    emb_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1")
-    return case_df, emb_df
+    case_url = "https://zenodo.org/records/15310586/files/case_texts.parquet?download=1"
+    emb_url = "https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1"
+
+    try:
+        with st.spinner("⬇️ Downloading clinical case texts..."):
+            case_resp = requests.get(case_url, stream=True, timeout=60)
+            case_resp.raise_for_status()
+            case_df = pd.read_parquet(io.BytesIO(case_resp.content))
+
+        with st.spinner("⬇️ Downloading embeddings..."):
+            emb_resp = requests.get(emb_url, stream=True, timeout=120)
+            emb_resp.raise_for_status()
+            emb_df = pd.read_parquet(io.BytesIO(emb_resp.content))
+
+        return case_df, emb_df
+
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
+        st.stop()
 
 with st.spinner("Loading case data from Zenodo..."):
   case_df, emb_df = load_data()

@@ -344,7 +344,8 @@ if "chat_session" not in st.session_state:
             - If the user asks a question, answer it using 'generate_answer'.
             - If the user includes both a case and a question, run 'find_cases' and 'generate_answer' in sequence.
             - After 'generate_answer', always run 'format_text' to structure any article references found and to include the corresponding links.
-            - Only run 'find_cases' again if the user clearly introduces a new case.
+            - Only run 'find_cases' again if the user clearly introduces a new case or changes the clinical context.
+            - If the user asks a new, unrelated clinical question, re-run 'find_cases' before 'generate_answer' to ensure the answer is based on relevant evidence.
             - If the user asks to export, or implies interest in downloading results, call 'export_cases'.
             - Do not forget to add the corresponding links to the numbered hyperlinks.
             - Respond in English if the user question is in English, or in Spanish if the question is in Spanish.

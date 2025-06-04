@@ -347,6 +347,7 @@ if "chat_session" not in st.session_state:
             - Only run 'find_cases' again if the user clearly introduces a new case.
             - If the user asks to export, or implies interest in downloading results, call 'export_cases'.
             - Do not forget to add the corresponding links to the numbered hyperlinks.
+            - Respond in English if the user question is in English, or in Spanish if the question is in Spanish.
             """
         )
     )

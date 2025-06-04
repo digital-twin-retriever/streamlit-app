@@ -21,32 +21,22 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
   genai.models.Models.generate_content = retry.Retry(
       predicate=is_retriable)(genai.models.Models.generate_content)
 
-
 # Load data
-@st.cache_data
-def load_data():
-    case_url = "https://zenodo.org/records/15310586/files/case_texts.parquet?download=1"
-    emb_url = "https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1"
+@st.cache_resource
+def load_case_data():
+    case_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_texts.parquet?download=1")
+    return case_df
 
-    try:
-        with st.spinner("⬇️ Downloading clinical case texts..."):
-            case_resp = requests.get(case_url, stream=True, timeout=60)
-            case_resp.raise_for_status()
-            case_df = pd.read_parquet(io.BytesIO(case_resp.content))
+@st.cache_resource
+def load_case_data():
+    emb_df = pd.read_parquet("https://zenodo.org/records/15310586/files/case_embeddings.parquet?download=1")
+    return emb_df
 
-        with st.spinner("⬇️ Downloading embeddings..."):
-            emb_resp = requests.get(emb_url, stream=True, timeout=120)
-            emb_resp.raise_for_status()
-            emb_df = pd.read_parquet(io.BytesIO(emb_resp.content))
+with st.spinner("📄 Loading clinical case texts..."):
+    case_df = load_case_data()
 
-        return case_df, emb_df
-
-    except Exception as e:
-        st.error(f"❌ Error loading data: {e}")
-        st.stop()
-
-with st.spinner("Loading case data from Zenodo..."):
-  case_df, emb_df = load_data()
+with st.spinner("🧠 Loading case embeddings..."):
+    emb_df = load_embedding_data()
 
 # Global CSS 
 st.markdown(

@@ -278,7 +278,7 @@ def generate_answer(question: str) -> str:
     Respond in English if the question is in English, or in Spanish if the question is in Spanish.
     """
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         contents=[prompt],
         config= types.GenerateContentConfig(temperature=0.0)
     )
@@ -342,7 +342,7 @@ def export_cases() -> str:
 # Session state chat instance
 if "chat_session" not in st.session_state:
     st.session_state.chat_session = client.chats.create(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash-lite",
         config=types.GenerateContentConfig(
             tools=[find_cases, generate_answer, format_text, export_cases],
             temperature=0.0,

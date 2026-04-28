@@ -153,17 +153,31 @@ if "chat_started" not in st.session_state:
 # Model functions
 def find_top_similar(query: str, top_k: int = 10, similarity_threshold: float = 0.68) -> pd.Series:
     """Return top_k most semantically similar cases above the threshold."""
-    norm = np.linalg.norm(emb_df.values, axis=1, keepdims=True)
-    normed_embeddings = emb_df.div(norm, axis=0)
-    query_vector = np.array(
-        client.models.embed_content(
-            model="models/text-embedding-004",
-            contents=[query],
-            config=types.EmbedContentConfig(task_type="semantic_similarity")
-        ).embeddings[0].values
+
+    # Normalize stored embeddings
+    emb_values = emb_df.values.astype(float)
+    emb_norm = np.linalg.norm(emb_values, axis=1, keepdims=True)
+    normed_embeddings = emb_values / np.maximum(emb_norm, 1e-12)
+
+    # Match the stored embedding dimensionality
+    embedding_dim = emb_df.shape[1]
+
+    # Embed query with the new Gemini embedding model
+    response = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=query,
+        config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_QUERY",
+            output_dimensionality=embedding_dim,
+        ),
     )
-    query_vector /= np.linalg.norm(query_vector)
-    scores = normed_embeddings.values @ query_vector
+
+    query_vector = np.array(response.embeddings[0].values, dtype=float)
+    query_vector = query_vector / max(np.linalg.norm(query_vector), 1e-12)
+
+    # Cosine similarity
+    scores = normed_embeddings @ query_vector
+
     result = pd.Series(scores, index=emb_df.index)
     return result[result >= similarity_threshold].nlargest(top_k)
 

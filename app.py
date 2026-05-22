@@ -730,22 +730,22 @@ if user_prompt:
         }
     )
 
-try:
-    with st.spinner("Retrieving relevant clinical cases..."):
-        retrieve_cases(user_prompt)
-
-    with st.spinner("Generating answer..."):
-        raw_answer = generate_answer(user_prompt)
-        final_answer = format_text(raw_answer)
-
-    st.session_state.chat_history.append(
-        {
-            "role": "assistant",
-            "content": final_answer,
-        }
-    )
-
-    update_conversation_memory(user_prompt, final_answer)
+    try:
+        with st.spinner("Retrieving relevant clinical cases..."):
+            retrieve_cases(user_prompt)
+    
+        with st.spinner("Generating answer..."):
+            raw_answer = generate_answer(user_prompt)
+            final_answer = format_text(raw_answer)
+    
+        st.session_state.chat_history.append(
+            {
+                "role": "assistant",
+                "content": final_answer,
+            }
+        )
+    
+        update_conversation_memory(user_prompt, final_answer)
 
     except Exception as e:
         error_msg = f"An error occurred: `{e}`"

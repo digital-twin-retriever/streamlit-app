@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import re
+import time
 from google import genai
 from google.genai import types
 from google.api_core import retry
@@ -76,6 +77,9 @@ if "citation_cache" not in st.session_state:
 if "csv_export_counter" not in st.session_state:
     st.session_state.csv_export_counter = 1
 
+if "last_timing" not in st.session_state:
+    st.session_state.last_timing = None
+
 
 # ---------------------------------------------------------------------
 # Utility functions
@@ -92,61 +96,95 @@ def truncate_text(text: str, max_chars: int = 2500) -> str:
     if len(text) <= max_chars:
         return text
 
-    return text[:max_chars].rsplit(" ", 1)[0] + "..."
+    truncated = text[:max_chars].rsplit(" ", 1)[0]
+
+    return truncated + "..."
 
 
-def get_recent_turns(max_messages: int = 6, max_chars: int = 1800) -> str:
-    """Return a compact recent conversation window."""
+def clean_answer_for_memory(answer: str) -> str:
+    """Remove reference section and markdown links before storing compact memory."""
+
+    if not isinstance(answer, str):
+        answer = str(answer)
+
+    answer = re.sub(r"\*\*References:\*\*.*", "", answer, flags=re.DOTALL)
+    answer = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", answer)
+
+    return answer.strip()
+
+
+def get_recent_turns(max_messages: int = 4, max_chars: int = 1200) -> str:
+    """
+    Return a compact recent conversation window.
+
+    References are removed to avoid polluting future retrieval queries.
+    """
 
     messages = st.session_state.chat_history[-max_messages:]
+    cleaned_messages = []
 
-    recent_text = "\n".join(
-        f"{message.get('role', 'unknown')}: {message.get('content', '')}"
-        for message in messages
-        if message.get("content")
-    )
+    for message in messages:
+        content = message.get("content", "")
+
+        if not content:
+            continue
+
+        content = clean_answer_for_memory(content)
+
+        cleaned_messages.append(
+            f"{message.get('role', 'unknown')}: {truncate_text(content, 500)}"
+        )
+
+    recent_text = "\n".join(cleaned_messages)
 
     return truncate_text(recent_text, max_chars)
 
 
 def build_contextual_retrieval_query(user_prompt: str) -> str:
     """
-    Build one contextual retrieval query using:
-    - compact conversation memory
-    - recent turns
-    - current user prompt
+    Build one contextual retrieval query.
 
-    This avoids fragile regex intent classification and keeps retrieval conversational.
+    The current user question is intentionally repeated and placed first so the
+    similarity search prioritizes the new question, while conversation memory is
+    used only as supporting context for ambiguous references.
     """
 
     memory = st.session_state.get("conversation_memory", "")
     recent_turns = get_recent_turns()
 
     query = f"""
-Conversation memory:
+Primary retrieval target:
+{user_prompt}
+
+Current user question, repeated as the main semantic focus:
+{user_prompt}
+
+Conversation context for resolving references only:
 {memory}
 
-Recent conversation:
+Recent conversation, secondary context only:
 {recent_turns}
 
-Current user question:
-{user_prompt}
+Retrieval instruction:
+Retrieve clinical case report chunks that are most relevant to answering the primary retrieval target.
+Prioritize the current user question over the previous conversation.
+Use the conversation context only to resolve ambiguous references such as "these patients", "that disease", "that treatment", or "the previous case".
 """
 
-    return truncate_text(query, max_chars=3000)
+    return truncate_text(query, max_chars=3200)
 
 
 def update_conversation_memory(user_prompt: str, assistant_answer: str) -> None:
     """
     Update compact rolling memory without an extra LLM call.
 
-    This keeps enough context for follow-up questions without storing the full chat forever.
+    This avoids unbounded context growth while preserving enough information for
+    follow-up questions.
     """
 
     previous_memory = st.session_state.get("conversation_memory", "")
 
-    clean_answer = re.sub(r"\*\*References:\*\*.*", "", assistant_answer, flags=re.DOTALL)
-    clean_answer = re.sub(r"\[[0-9,\s\]\(\)https:/.\-a-zA-Z]+\]", "", clean_answer)
+    clean_answer = clean_answer_for_memory(assistant_answer)
 
     memory_update = f"""
 {previous_memory}
@@ -158,7 +196,10 @@ Latest assistant answer summary:
 {truncate_text(clean_answer, 700)}
 """
 
-    st.session_state.conversation_memory = truncate_text(memory_update, max_chars=1800)
+    st.session_state.conversation_memory = truncate_text(
+        memory_update,
+        max_chars=1800,
+    )
 
 
 def extract_pmc_ids(text: str) -> list[str]:
@@ -170,6 +211,7 @@ def extract_pmc_ids(text: str) -> list[str]:
     ids = re.findall(r"PMC\d+", text)
 
     ordered_ids = []
+
     for pmcid in ids:
         if pmcid not in ordered_ids:
             ordered_ids.append(pmcid)
@@ -186,11 +228,15 @@ def find_top_similar(
     top_k: int = 8,
     similarity_threshold: float = 0.60,
 ) -> pd.Series:
-    """Return top_k most semantically similar cases above the threshold."""
+    """
+    Return top_k most semantically similar cases above the threshold.
+
+    Embedding normalization is kept inside the function to avoid Streamlit
+    cache/resource issues in constrained deployments.
+    """
 
     embedding_dim = emb_df.shape[1]
 
-    # Kept inside the function to avoid Streamlit resource/cache issues.
     emb_values = emb_df.values.astype(np.float32)
     emb_norm = np.linalg.norm(emb_values, axis=1, keepdims=True)
     normed_embeddings = emb_values / np.maximum(emb_norm, 1e-12)
@@ -221,8 +267,8 @@ def compile_similar_cases(
     """
     Find similar clinical case chunks.
 
-    This version does not fetch citations or discussion upfront.
-    It keeps retrieval fast and only fetches citations later for PMCs actually cited.
+    This does not fetch citations or discussion upfront. Citations are fetched
+    later only for PMCs actually cited in the answer.
     """
 
     top_similar = find_top_similar(
@@ -232,7 +278,6 @@ def compile_similar_cases(
     )
 
     if top_similar.empty:
-        # Fallback with a slightly lower threshold.
         top_similar = find_top_similar(
             retrieval_query,
             top_k=top_k,
@@ -250,22 +295,29 @@ def compile_similar_cases(
     df["case_similarity_score"] = df["case_id"].map(top_similar)
     df.sort_values("case_similarity_score", ascending=False, inplace=True)
 
-    expected_columns = ["case_id", "article_id", "case_text", "case_similarity_score"]
-    available_columns = [col for col in expected_columns if col in df.columns]
+    expected_columns = [
+        "case_id",
+        "article_id",
+        "case_text",
+        "case_similarity_score",
+    ]
+
+    available_columns = [
+        col for col in expected_columns
+        if col in df.columns
+    ]
 
     return df[available_columns].copy()
 
 
 def retrieve_cases(user_prompt: str) -> pd.DataFrame:
-    """Always run conversational retrieval using one contextual query."""
+    """
+    Always run retrieval using a fresh contextual query.
+
+    This intentionally recalculates similarity scores for every new user prompt.
+    """
 
     retrieval_query = build_contextual_retrieval_query(user_prompt)
-
-    if (
-        st.session_state.last_retrieval_query == retrieval_query
-        and st.session_state.similar_cases_df is not None
-    ):
-        return st.session_state.similar_cases_df
 
     df = compile_similar_cases(retrieval_query)
 
@@ -275,7 +327,10 @@ def retrieve_cases(user_prompt: str) -> pd.DataFrame:
     return df
 
 
-def build_retrieved_context(df: pd.DataFrame, max_case_chars: int = 2200) -> str:
+def build_retrieved_context(
+    df: pd.DataFrame,
+    max_case_chars: int = 2200,
+) -> str:
     """Build compact retrieved context for the generation prompt."""
 
     if df is None or df.empty:
@@ -440,6 +495,8 @@ Instructions:
 - Answer in Spanish if the current user question is in Spanish.
 - Answer in English if the current user question is in English.
 - Use only the retrieved clinical case report chunks as evidence.
+- Prioritize the current user question over the previous conversation.
+- Use the conversation memory only to resolve ambiguous references, not to override the current question.
 - First assess whether the retrieved chunks are clinically relevant to the current user question.
 - If the retrieved chunks are unrelated or insufficient, say that no relevant data was found in the retrieved cases.
 - Do not answer using unrelated retrieved chunks.
@@ -473,7 +530,12 @@ def export_cases() -> None:
         return
 
     export_columns = [
-        col for col in ["case_id", "article_id", "case_text", "case_similarity_score"]
+        col for col in [
+            "case_id",
+            "article_id",
+            "case_text",
+            "case_similarity_score",
+        ]
         if col in df.columns
     ]
 
@@ -588,6 +650,25 @@ st.markdown(
         display: block;
         margin: 1rem auto 0 auto !important;
     }
+
+    .latency-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 0.65rem;
+        padding: 0.28rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(97, 114, 224, 0.10);
+        border: 1px solid rgba(97, 114, 224, 0.22);
+        color: #4d5ec7;
+        font-size: 0.78rem;
+        font-weight: 500;
+    }
+
+    .latency-pill span {
+        color: #757a8e;
+        font-weight: 400;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -621,6 +702,7 @@ with st.sidebar:
         st.session_state.similar_cases_df = None
         st.session_state.last_retrieval_query = None
         st.session_state.conversation_memory = ""
+        st.session_state.last_timing = None
         st.rerun()
 
     st.write("")
@@ -650,17 +732,38 @@ if user_prompt:
     )
 
     try:
+        total_start = time.perf_counter()
+
+        retrieval_start = time.perf_counter()
         with st.spinner("Retrieving relevant clinical cases..."):
             retrieve_cases(user_prompt)
+        retrieval_seconds = time.perf_counter() - retrieval_start
 
+        generation_start = time.perf_counter()
         with st.spinner("Generating answer..."):
             raw_answer = generate_answer(user_prompt)
-            final_answer = format_text(raw_answer)
+        generation_seconds = time.perf_counter() - generation_start
+
+        formatting_start = time.perf_counter()
+        final_answer = format_text(raw_answer)
+        formatting_seconds = time.perf_counter() - formatting_start
+
+        total_seconds = time.perf_counter() - total_start
+
+        timing = {
+            "retrieval_seconds": retrieval_seconds,
+            "generation_seconds": generation_seconds,
+            "formatting_seconds": formatting_seconds,
+            "total_seconds": total_seconds,
+        }
+
+        st.session_state.last_timing = timing
 
         st.session_state.chat_history.append(
             {
                 "role": "assistant",
                 "content": final_answer,
+                "timing": timing,
             }
         )
 
@@ -699,6 +802,26 @@ for message in st.session_state.chat_history:
         else:
             st.markdown(message["content"])
 
+            timing = message.get("timing")
+
+            if timing:
+                total_seconds = timing.get("total_seconds", 0)
+                retrieval_seconds = timing.get("retrieval_seconds", 0)
+                generation_seconds = timing.get("generation_seconds", 0)
+                formatting_seconds = timing.get("formatting_seconds", 0)
+
+                st.markdown(
+                    f"""
+                    <div class="latency-pill">
+                        Response time: {total_seconds:.1f}s
+                        <span>
+                            retrieval {retrieval_seconds:.1f}s · generation {generation_seconds:.1f}s · references {formatting_seconds:.1f}s
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
 
 # ---------------------------------------------------------------------
 # Optional debug panel
@@ -712,7 +835,11 @@ with st.expander("Retrieval debug", expanded=False):
 
     if df_debug is not None and not df_debug.empty:
         debug_columns = [
-            col for col in ["case_id", "article_id", "case_similarity_score"]
+            col for col in [
+                "case_id",
+                "article_id",
+                "case_similarity_score",
+            ]
             if col in df_debug.columns
         ]
 

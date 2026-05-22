@@ -46,20 +46,11 @@ def load_embedding_data() -> pd.DataFrame:
     )
 
 
-@st.cache_resource
-def get_normalized_embeddings(emb_df: pd.DataFrame) -> np.ndarray:
-    emb_values = emb_df.values.astype(np.float32)
-    emb_norm = np.linalg.norm(emb_values, axis=1, keepdims=True)
-    return emb_values / np.maximum(emb_norm, 1e-12)
-
-
 with st.spinner("Loading clinical case texts..."):
     case_df = load_case_data()
 
 with st.spinner("Loading case embeddings..."):
     emb_df = load_embedding_data()
-
-normed_embeddings = get_normalized_embeddings(emb_df)
 
 
 # ---------------------------------------------------------------------
@@ -95,6 +86,11 @@ def find_top_similar(
 
     embedding_dim = emb_df.shape[1]
 
+    # Keep this inside the function to avoid Streamlit cache/resource issues.
+    emb_values = emb_df.values.astype(np.float32)
+    emb_norm = np.linalg.norm(emb_values, axis=1, keepdims=True)
+    normed_embeddings = emb_values / np.maximum(emb_norm, 1e-12)
+
     response = client.models.embed_content(
         model="gemini-embedding-001",
         contents=query,
@@ -113,7 +109,6 @@ def find_top_similar(
     return result[result >= similarity_threshold].nlargest(top_k)
 
 
-@st.cache_data(show_spinner=False)
 def fetch_citation(pmcid: str) -> str:
     """Fetch APA-style citation for a given PMCID."""
 
@@ -142,7 +137,6 @@ def fetch_citation(pmcid: str) -> str:
         return f"Citation not available for {pmcid}. Error: {e}"
 
 
-@st.cache_data(show_spinner=False)
 def fetch_discussion(pmcid: str) -> str:
     """Return discussion section from a PMC article."""
 
@@ -173,6 +167,7 @@ def fetch_discussion(pmcid: str) -> str:
             return " ".join(discussion)
 
         passages = soup.find_all("passage")
+        discussion = []
 
         for i, p in enumerate(passages):
             if (
@@ -256,7 +251,7 @@ def compile_similar_cases(input_query: str) -> pd.DataFrame:
 
 
 def find_cases(query: str) -> pd.DataFrame:
-    """Retrieve and cache similar cases for a query."""
+    """Retrieve and store similar cases for a query."""
 
     if (
         st.session_state.last_query == query
@@ -328,9 +323,14 @@ Instructions:
 # ---------------------------------------------------------------------
 
 def format_text(response_text: str) -> str:
-    """Convert PMC references into numbered links and append reference list."""
+    """Convert PMC references into numbered hyperlinks and append reference list."""
 
-    if not re.search(r"\[PMC\d+(?:,\s*PMC\d+)*\]", response_text):
+    if not isinstance(response_text, str):
+        response_text = str(response_text)
+
+    pattern = r"\[\s*(PMC\d+(?:\s*,\s*PMC\d+)*)\s*\]"
+
+    if not re.search(pattern, response_text):
         return response_text
 
     df = st.session_state.get("similar_cases_df")
@@ -340,17 +340,12 @@ def format_text(response_text: str) -> str:
 
     citations = df.groupby("article_id")["citation"].first().to_dict()
 
-    link_map = {
-        article_id: f"https://pmc.ncbi.nlm.nih.gov/articles/{article_id}/"
-        for article_id in citations.keys()
-    }
-
-    raw_refs = re.findall(r"\[(PMC\d+(?:,\s*PMC\d+)*)\]", response_text)
+    raw_refs = re.findall(pattern, response_text)
 
     ordered_ids = []
 
     for block in raw_refs:
-        for article_id in map(str.strip, block.split(",")):
+        for article_id in re.split(r"\s*,\s*", block.strip()):
             if article_id not in ordered_ids:
                 ordered_ids.append(article_id)
 
@@ -360,35 +355,29 @@ def format_text(response_text: str) -> str:
     }
 
     def replace_refs(match):
-        ids = [article_id.strip() for article_id in match.group(1).split(",")]
+        ids = re.split(r"\s*,\s*", match.group(1).strip())
 
         formatted_refs = []
 
         for article_id in ids:
             number = ref_map.get(article_id)
-            link = link_map.get(article_id)
+            url = f"https://pmc.ncbi.nlm.nih.gov/articles/{article_id}/"
 
-            if number and link:
-                formatted_refs.append(f"[{number}]({link})")
-            elif number:
-                formatted_refs.append(str(number))
+            if number:
+                formatted_refs.append(f"[{number}]({url})")
             else:
                 formatted_refs.append(article_id)
 
         return "[" + ", ".join(formatted_refs) + "]"
 
-    formatted_text = re.sub(
-        r"\[(PMC\d+(?:,\s*PMC\d+)*)\]",
-        replace_refs,
-        response_text,
-    )
+    formatted_text = re.sub(pattern, replace_refs, response_text)
 
     reference_list = "\n".join(
         f"{ref_map[article_id]}. {citations.get(article_id, 'Citation not found')}"
         for article_id in ordered_ids
     )
 
-    return f"{formatted_text}\n\n**References:**\n{reference_list}"
+    return f"{formatted_text}\n\n**References:**\n\n{reference_list}"
 
 
 # ---------------------------------------------------------------------
@@ -621,7 +610,12 @@ for message in st.session_state.chat_history:
                 key=message["filename"],
             )
         else:
-            st.markdown(message["content"])
+            content = message["content"]
+
+            if message["role"] == "assistant":
+                content = format_text(content)
+
+            st.markdown(content)
 
 
 # ---------------------------------------------------------------------

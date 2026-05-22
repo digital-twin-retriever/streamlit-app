@@ -23,12 +23,12 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
 # Load data
 @st.cache_resource
 def load_case_data():
-    case_df = pd.read_parquet("https://zenodo.org/records/20332558/files/case_texts.parquet?download=1")
+    case_df = pd.read_parquet("https://zenodo.org/records/20345273/files/case_texts.parquet?download=1")
     return case_df
 
 @st.cache_resource
 def load_embedding_data():
-    emb_df = pd.read_parquet("https://zenodo.org/records/20332558/files/case_embeddings.parquet?download=1")
+    emb_df = pd.read_parquet("https://zenodo.org/records/20345273/files/case_embeddings.parquet?download=1")
     return emb_df
 
 with st.spinner("📄 Loading clinical case texts..."):

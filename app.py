@@ -17,14 +17,22 @@ st.set_page_config(page_title="Digital Twin Retriever", page_icon=":robot_face:"
 
 client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 
-is_retriable = lambda e: (
-    isinstance(e, genai.errors.APIError) and e.code in {429, 503}
-)
 
-if not hasattr(genai.models.Models.generate_content, "__wrapped__"):
-    genai.models.Models.generate_content = retry.Retry(
-        predicate=is_retriable
-    )(genai.models.Models.generate_content)
+# Apply retry wrapper defensively.
+# This avoids breaking the whole Streamlit app if the installed google-genai
+# version changes internal method attributes.
+try:
+    is_retriable = lambda e: (
+        isinstance(e, genai.errors.APIError) and e.code in {429, 503}
+    )
+
+    if not hasattr(genai.models.Models.generate_content, "__wrapped__"):
+        genai.models.Models.generate_content = retry.Retry(
+            predicate=is_retriable
+        )(genai.models.Models.generate_content)
+
+except Exception as e:
+    st.warning(f"Retry wrapper could not be applied: {e}")
 
 
 # ---------------------------------------------------------------------
@@ -32,14 +40,14 @@ if not hasattr(genai.models.Models.generate_content, "__wrapped__"):
 # ---------------------------------------------------------------------
 
 @st.cache_resource
-def load_case_data() -> pd.DataFrame:
+def load_case_data():
     return pd.read_parquet(
         "https://zenodo.org/records/20345273/files/case_texts.parquet?download=1"
     )
 
 
 @st.cache_resource
-def load_embedding_data() -> pd.DataFrame:
+def load_embedding_data():
     return pd.read_parquet(
         "https://zenodo.org/records/20345273/files/case_embeddings.parquet?download=1"
     )
@@ -85,7 +93,7 @@ if "last_timing" not in st.session_state:
 # Utility functions
 # ---------------------------------------------------------------------
 
-def truncate_text(text: str, max_chars: int = 2500) -> str:
+def truncate_text(text, max_chars=2500):
     """Safely truncate text to control prompt size."""
 
     if text is None:
@@ -97,23 +105,30 @@ def truncate_text(text: str, max_chars: int = 2500) -> str:
         return text
 
     truncated = text[:max_chars].rsplit(" ", 1)[0]
-
     return truncated + "..."
 
 
-def clean_answer_for_memory(answer: str) -> str:
+def clean_answer_for_memory(answer):
     """Remove reference section and markdown links before storing compact memory."""
 
     if not isinstance(answer, str):
         answer = str(answer)
 
-    answer = re.sub(r"\*\*References:\*\*.*", "", answer, flags=re.DOTALL)
+    # Remove reference section.
+    answer = re.sub(
+        r"\*\*References:\*\*.*",
+        "",
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    # Remove markdown links but keep visible text.
     answer = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", answer)
 
     return answer.strip()
 
 
-def get_recent_turns(max_messages: int = 4, max_chars: int = 1200) -> str:
+def get_recent_turns(max_messages=4, max_chars=1200):
     """
     Return a compact recent conversation window.
 
@@ -140,7 +155,7 @@ def get_recent_turns(max_messages: int = 4, max_chars: int = 1200) -> str:
     return truncate_text(recent_text, max_chars)
 
 
-def build_contextual_retrieval_query(user_prompt: str) -> str:
+def build_contextual_retrieval_query(user_prompt):
     """
     Build one contextual retrieval query.
 
@@ -174,7 +189,7 @@ Use the conversation context only to resolve ambiguous references such as "these
     return truncate_text(query, max_chars=3200)
 
 
-def update_conversation_memory(user_prompt: str, assistant_answer: str) -> None:
+def update_conversation_memory(user_prompt, assistant_answer):
     """
     Update compact rolling memory without an extra LLM call.
 
@@ -183,7 +198,6 @@ def update_conversation_memory(user_prompt: str, assistant_answer: str) -> None:
     """
 
     previous_memory = st.session_state.get("conversation_memory", "")
-
     clean_answer = clean_answer_for_memory(assistant_answer)
 
     memory_update = f"""
@@ -202,7 +216,7 @@ Latest assistant answer summary:
     )
 
 
-def extract_pmc_ids(text: str) -> list[str]:
+def extract_pmc_ids(text):
     """Extract unique PMC IDs from a text preserving order."""
 
     if not isinstance(text, str):
@@ -223,11 +237,7 @@ def extract_pmc_ids(text: str) -> list[str]:
 # Retrieval
 # ---------------------------------------------------------------------
 
-def find_top_similar(
-    query: str,
-    top_k: int = 8,
-    similarity_threshold: float = 0.60,
-) -> pd.Series:
+def find_top_similar(query, top_k=8, similarity_threshold=0.60):
     """
     Return top_k most semantically similar cases above the threshold.
 
@@ -259,11 +269,7 @@ def find_top_similar(
     return result[result >= similarity_threshold].nlargest(top_k)
 
 
-def compile_similar_cases(
-    retrieval_query: str,
-    top_k: int = 8,
-    similarity_threshold: float = 0.60,
-) -> pd.DataFrame:
+def compile_similar_cases(retrieval_query, top_k=8, similarity_threshold=0.60):
     """
     Find similar clinical case chunks.
 
@@ -285,6 +291,9 @@ def compile_similar_cases(
         )
 
     if top_similar.empty:
+        return pd.DataFrame()
+
+    if "case_id" not in case_df.columns:
         return pd.DataFrame()
 
     df = case_df.loc[case_df["case_id"].isin(top_similar.index)].copy()
@@ -310,7 +319,7 @@ def compile_similar_cases(
     return df[available_columns].copy()
 
 
-def retrieve_cases(user_prompt: str) -> pd.DataFrame:
+def retrieve_cases(user_prompt):
     """
     Always run retrieval using a fresh contextual query.
 
@@ -327,19 +336,22 @@ def retrieve_cases(user_prompt: str) -> pd.DataFrame:
     return df
 
 
-def build_retrieved_context(
-    df: pd.DataFrame,
-    max_case_chars: int = 2200,
-) -> str:
+def build_retrieved_context(df, max_case_chars=2200):
     """Build compact retrieved context for the generation prompt."""
 
     if df is None or df.empty:
         return ""
 
+    if "article_id" not in df.columns or "case_text" not in df.columns:
+        return ""
+
     context_blocks = []
 
     for article_id, group in df.groupby("article_id", sort=False):
-        similarity_score = group["case_similarity_score"].max()
+        similarity_score = 0
+
+        if "case_similarity_score" in group.columns:
+            similarity_score = group["case_similarity_score"].max()
 
         case_text = " ".join(
             group["case_text"].dropna().astype(str).tolist()
@@ -361,7 +373,7 @@ Retrieved case text:
 # Citations and reference formatting
 # ---------------------------------------------------------------------
 
-def fetch_citation(pmcid: str) -> str:
+def fetch_citation(pmcid):
     """Fetch APA-style citation for a given PMCID."""
 
     if pmcid in st.session_state.citation_cache:
@@ -400,7 +412,7 @@ def fetch_citation(pmcid: str) -> str:
     return citation
 
 
-def format_text(response_text: str) -> str:
+def format_text(response_text):
     """
     Convert PMC references into numbered hyperlinks and append reference list.
 
@@ -433,7 +445,6 @@ def format_text(response_text: str) -> str:
 
     def replace_refs(match):
         ids = re.split(r"\s*,\s*", match.group(1).strip())
-
         formatted_refs = []
 
         for article_id in ids:
@@ -461,7 +472,7 @@ def format_text(response_text: str) -> str:
 # Generation
 # ---------------------------------------------------------------------
 
-def generate_answer(user_prompt: str) -> str:
+def generate_answer(user_prompt):
     """Generate an answer using retrieved case chunks and conversation context."""
 
     df = st.session_state.get("similar_cases_df")
@@ -473,6 +484,13 @@ def generate_answer(user_prompt: str) -> str:
         )
 
     retrieved_context = build_retrieved_context(df)
+
+    if not retrieved_context:
+        return (
+            "No relevant data was found in the retrieved cases. "
+            "Please rephrase the clinical question or provide more clinical detail."
+        )
+
     memory = st.session_state.get("conversation_memory", "")
     recent_turns = get_recent_turns()
 
@@ -513,14 +531,19 @@ Instructions:
         config=types.GenerateContentConfig(temperature=0.0),
     )
 
-    return response.text
+    response_text = getattr(response, "text", None)
+
+    if response_text:
+        return response_text
+
+    return str(response)
 
 
 # ---------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------
 
-def export_cases() -> None:
+def export_cases():
     """Prepare similar cases as downloadable CSV."""
 
     df = st.session_state.get("similar_cases_df")
@@ -821,31 +844,6 @@ for message in st.session_state.chat_history:
                     """,
                     unsafe_allow_html=True,
                 )
-
-
-# ---------------------------------------------------------------------
-# Optional debug panel
-# ---------------------------------------------------------------------
-
-with st.expander("Retrieval debug", expanded=False):
-    st.write("Last retrieval query:")
-    st.code(st.session_state.get("last_retrieval_query", "") or "")
-
-    df_debug = st.session_state.get("similar_cases_df")
-
-    if df_debug is not None and not df_debug.empty:
-        debug_columns = [
-            col for col in [
-                "case_id",
-                "article_id",
-                "case_similarity_score",
-            ]
-            if col in df_debug.columns
-        ]
-
-        st.dataframe(df_debug[debug_columns])
-    else:
-        st.write("No retrieved cases yet.")
 
 
 # ---------------------------------------------------------------------

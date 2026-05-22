@@ -23,12 +23,12 @@ if not hasattr(genai.models.Models.generate_content, '__wrapped__'):
 # Load data
 @st.cache_resource
 def load_case_data():
-    case_df = pd.read_parquet("https://zenodo.org/records/20328848/files/case_texts.parquet?download=1")
+    case_df = pd.read_parquet("https://zenodo.org/records/20332558/files/case_texts.parquet?download=1")
     return case_df
 
 @st.cache_resource
 def load_embedding_data():
-    emb_df = pd.read_parquet("https://zenodo.org/records/20328848/files/case_embeddings.parquet?download=1")
+    emb_df = pd.read_parquet("https://zenodo.org/records/20332558/files/case_embeddings.parquet?download=1")
     return emb_df
 
 with st.spinner("📄 Loading clinical case texts..."):
@@ -150,19 +150,18 @@ if "chat_started" not in st.session_state:
     st.session_state.chat_started = False
 
 
-# Model functions
-def find_top_similar(query: str, top_k: int = 10, similarity_threshold: float = 0.68) -> pd.Series:
+def find_top_similar( query: str, top_k: int = 10, similarity_threshold: float = 0.68 ) -> pd.Series:
     """Return top_k most semantically similar cases above the threshold."""
 
+    # Stored embedding dimensionality
+    embedding_dim = emb_df.shape[1]
+
     # Normalize stored embeddings
-    emb_values = emb_df.values.astype(float)
+    emb_values = emb_df.values.astype(np.float32)
     emb_norm = np.linalg.norm(emb_values, axis=1, keepdims=True)
     normed_embeddings = emb_values / np.maximum(emb_norm, 1e-12)
 
-    # Match the stored embedding dimensionality
-    embedding_dim = emb_df.shape[1]
-
-    # Embed query with the new Gemini embedding model
+    # Embed query using the same dimensionality as stored documents
     response = client.models.embed_content(
         model="gemini-embedding-001",
         contents=query,
@@ -172,13 +171,17 @@ def find_top_similar(query: str, top_k: int = 10, similarity_threshold: float = 
         ),
     )
 
-    query_vector = np.array(response.embeddings[0].values, dtype=float)
-    query_vector = query_vector / max(np.linalg.norm(query_vector), 1e-12)
+    query_vector = np.array(
+        response.embeddings[0].values,
+        dtype=np.float32
+    )
+    query_norm = np.linalg.norm(query_vector)
+    query_vector = query_vector / max(query_norm, 1e-12)
 
     # Cosine similarity
     scores = normed_embeddings @ query_vector
-
     result = pd.Series(scores, index=emb_df.index)
+
     return result[result >= similarity_threshold].nlargest(top_k)
 
 

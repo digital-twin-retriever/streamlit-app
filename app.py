@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import requests
 import re
-import time
 from google import genai
 from google.genai import types
 from google.api_core import retry
@@ -84,9 +83,6 @@ if "citation_cache" not in st.session_state:
 
 if "csv_export_counter" not in st.session_state:
     st.session_state.csv_export_counter = 1
-
-if "last_timing" not in st.session_state:
-    st.session_state.last_timing = None
 
 
 # ---------------------------------------------------------------------
@@ -673,25 +669,6 @@ st.markdown(
         display: block;
         margin: 1rem auto 0 auto !important;
     }
-
-    .latency-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        margin-top: 0.65rem;
-        padding: 0.28rem 0.65rem;
-        border-radius: 999px;
-        background: rgba(97, 114, 224, 0.10);
-        border: 1px solid rgba(97, 114, 224, 0.22);
-        color: #4d5ec7;
-        font-size: 0.78rem;
-        font-weight: 500;
-    }
-
-    .latency-pill span {
-        color: #757a8e;
-        font-weight: 400;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -725,7 +702,6 @@ with st.sidebar:
         st.session_state.similar_cases_df = None
         st.session_state.last_retrieval_query = None
         st.session_state.conversation_memory = ""
-        st.session_state.last_timing = None
         st.rerun()
 
     st.write("")
@@ -754,43 +730,22 @@ if user_prompt:
         }
     )
 
-    try:
-        total_start = time.perf_counter()
+try:
+    with st.spinner("Retrieving relevant clinical cases..."):
+        retrieve_cases(user_prompt)
 
-        retrieval_start = time.perf_counter()
-        with st.spinner("Retrieving relevant clinical cases..."):
-            retrieve_cases(user_prompt)
-        retrieval_seconds = time.perf_counter() - retrieval_start
-
-        generation_start = time.perf_counter()
-        with st.spinner("Generating answer..."):
-            raw_answer = generate_answer(user_prompt)
-        generation_seconds = time.perf_counter() - generation_start
-
-        formatting_start = time.perf_counter()
+    with st.spinner("Generating answer..."):
+        raw_answer = generate_answer(user_prompt)
         final_answer = format_text(raw_answer)
-        formatting_seconds = time.perf_counter() - formatting_start
 
-        total_seconds = time.perf_counter() - total_start
-
-        timing = {
-            "retrieval_seconds": retrieval_seconds,
-            "generation_seconds": generation_seconds,
-            "formatting_seconds": formatting_seconds,
-            "total_seconds": total_seconds,
+    st.session_state.chat_history.append(
+        {
+            "role": "assistant",
+            "content": final_answer,
         }
+    )
 
-        st.session_state.last_timing = timing
-
-        st.session_state.chat_history.append(
-            {
-                "role": "assistant",
-                "content": final_answer,
-                "timing": timing,
-            }
-        )
-
-        update_conversation_memory(user_prompt, final_answer)
+    update_conversation_memory(user_prompt, final_answer)
 
     except Exception as e:
         error_msg = f"An error occurred: `{e}`"
@@ -824,26 +779,6 @@ for message in st.session_state.chat_history:
             )
         else:
             st.markdown(message["content"])
-
-            timing = message.get("timing")
-
-            if timing:
-                total_seconds = timing.get("total_seconds", 0)
-                retrieval_seconds = timing.get("retrieval_seconds", 0)
-                generation_seconds = timing.get("generation_seconds", 0)
-                formatting_seconds = timing.get("formatting_seconds", 0)
-
-                st.markdown(
-                    f"""
-                    <div class="latency-pill">
-                        Response time: {total_seconds:.1f}s
-                        <span>
-                            retrieval {retrieval_seconds:.1f}s · generation {generation_seconds:.1f}s · references {formatting_seconds:.1f}s
-                        </span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
 
 
 # ---------------------------------------------------------------------

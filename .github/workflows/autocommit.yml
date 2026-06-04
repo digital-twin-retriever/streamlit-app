@@ -1,6 +1,8 @@
 name: Keep Streamlit Alive
 
 on:
+  workflow_dispatch:
+
   schedule:
     - cron: "0 */8 * * *"
 
@@ -9,6 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Ping app
+      - name: Ping Streamlit app
         run: |
           curl -L -s https://digital-twin-retriever.streamlit.app/ > /dev/null
